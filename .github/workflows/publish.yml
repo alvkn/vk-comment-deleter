@@ -14,11 +14,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        runtime: [win-x64, linux-x64]
+        runtime: [win-x64, linux-x64, osx-x64, osx-arm64]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -44,6 +46,12 @@ jobs:
           cd ./publish/${{ matrix.runtime }}
           zip -r ../../vk-comments-deleter-${{ matrix.runtime }}.zip *
 
+      - name: Create archive (macOS)
+        if: startsWith(matrix.runtime, 'osx-')
+        run: |
+          cd ./publish/${{ matrix.runtime }}
+          tar -czf ../../vk-comments-deleter-${{ matrix.runtime }}.tar.gz *
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -59,11 +67,37 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
 
       - name: Display structure of downloaded files
         run: ls -la
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Получаем предыдущий тег
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+          
+          # Если предыдущий тег существует, генерируем changelog
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "Генерируем changelog от $PREVIOUS_TAG до ${{ github.ref_name }}"
+            CHANGELOG=$(git log --pretty=format:"- %s" $PREVIOUS_TAG..HEAD | grep -v "^$" | head -20)
+            if [ -n "$CHANGELOG" ]; then
+              echo "changelog<<EOF" >> $GITHUB_OUTPUT
+              echo "$CHANGELOG" >> $GITHUB_OUTPUT
+              echo "EOF" >> $GITHUB_OUTPUT
+            else
+              echo "changelog=- Нет коммитов после предыдущего тега" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "changelog=- Первый релиз" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create Release
         id: create_release
@@ -83,6 +117,8 @@ jobs:
             ### Скачать:
             - **Windows**: `vk-comments-deleter-win-x64.zip`
             - **Linux**: `vk-comments-deleter-linux-x64.tar.gz`
+            - **macOS Intel**: `vk-comments-deleter-osx-x64.tar.gz`
+            - **macOS Apple Silicon**: `vk-comments-deleter-osx-arm64.tar.gz`
             
             ### Использование:
             1. Распакуйте архив
@@ -92,6 +128,9 @@ jobs:
             ### Требования:
             - .NET 9.0 Runtime (включен в self-contained сборки)
             - Access Token ВКонтакте с правами на управление комментариями (например Kate Mobile)
+            
+            ### Изменения:
+            ${{ steps.changelog.outputs.changelog }}
 
       - name: Upload Windows Release Asset
         uses: actions/upload-release-asset@v1
@@ -111,4 +150,24 @@ jobs:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./vk-comments-deleter-linux-x64/vk-comments-deleter-linux-x64.tar.gz
           asset_name: vk-comments-deleter-linux-x64.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Upload macOS Intel Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./vk-comments-deleter-osx-x64/vk-comments-deleter-osx-x64.tar.gz
+          asset_name: vk-comments-deleter-osx-x64.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Upload macOS Apple Silicon Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./vk-comments-deleter-osx-arm64/vk-comments-deleter-osx-arm64.tar.gz
+          asset_name: vk-comments-deleter-osx-arm64.tar.gz
           asset_content_type: application/gzip
